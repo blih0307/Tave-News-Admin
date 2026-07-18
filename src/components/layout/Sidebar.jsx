@@ -35,12 +35,12 @@ export default function Sidebar({ isOpen = false, onClose = () => {} }) {
       )}
 
       <aside
-        className={`fixed lg:static top-0 left-0 z-50 w-64 h-screen lg:h-screen bg-gray-950 flex flex-col border-r border-gray-800 transform transition-transform duration-300 ease-in-out overflow-y-auto overscroll-contain ${
+        className={`fixed lg:static top-0 left-0 z-50 w-64 h-[100dvh] lg:h-screen bg-gray-950 flex flex-col border-r border-gray-800 transform transition-transform duration-300 ease-in-out ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         } lg:translate-x-0`}
       >
         {/* Logo */}
-        <div className="p-6 border-b border-gray-800 flex items-start justify-between">
+        <div className="p-6 border-b border-gray-800 flex items-start justify-between shrink-0">
           <div>
             <div className="text-white font-black text-xl tracking-tight flex items-center gap-2">
               {isSports ? <MdSportsSoccer size={20} className="text-yellow-400" /> : <MdNewspaper size={20} />}
@@ -58,7 +58,7 @@ export default function Sidebar({ isOpen = false, onClose = () => {} }) {
         </div>
 
         {/* Site Switcher */}
-        <div className="p-4 border-b border-gray-800">
+        <div className="p-4 border-b border-gray-800 shrink-0">
           <div className="text-gray-500 text-xs uppercase tracking-widest mb-2">Switch site</div>
           <div className="flex gap-2">
             <button
@@ -81,7 +81,7 @@ export default function Sidebar({ isOpen = false, onClose = () => {} }) {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 p-4 space-y-1">
+        <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-1">
           {navItems.map(item => {
             if (item.adminOnly && user?.role !== 'admin') return null
             return (
@@ -105,7 +105,7 @@ export default function Sidebar({ isOpen = false, onClose = () => {} }) {
         </nav>
 
         {/* User */}
-        <div className="p-4 border-t border-gray-800">
+        <div className="p-4 border-t border-gray-800 shrink-0">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-white text-sm font-bold">
               {user?.name?.charAt(0).toUpperCase()}
