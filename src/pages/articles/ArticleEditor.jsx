@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ReactQuill, { Quill } from 'react-quill'
 import 'react-quill/dist/quill.snow.css'
@@ -20,22 +20,43 @@ Quill.import('ui/icons').embed =
 // Quill's normal HTML model strips <script> tags on save, so the snippet
 // gets stored URI-encoded in a data attribute; the public frontend's
 // content renderer (splitEmbeds in ArticlePage.jsx) looks for this exact
-// div shape and swaps it for a live <EmbedHtml /> at render time.
+// tag shape and swaps it for a live <EmbedHtml /> at render time.
+//
+// IMPORTANT: the tag name below is deliberately NOT a generic tag like
+// "div". Quill/Parchment matches pasted HTML nodes to registered blots by
+// tag name when there's no more specific class match (see
+// Parchment.query in registry.ts: it checks classList first, then falls
+// back to `tags[node.tagName]`). Word, Google Docs, and many websites
+// wrap ordinary pasted paragraphs in plain <div> elements with no
+// distinguishing class -- so registering this blot under tagName "div"
+// caused EVERY pasted div (i.e. basically any pasted rich text) to get
+// silently reinterpreted as an embed block. A custom, hyphenated tag name
+// (valid HTML, never produced by any real copy/paste source) makes that
+// collision impossible.
 const BlockEmbed = Quill.import('blots/block/embed')
 class InlineEmbedBlot extends BlockEmbed {
   static create(html) {
     const node = super.create()
-    // NOTE: setting a static `className` on the blot class does NOT
-    // automatically apply it for a custom BlockEmbed -- that's only a real
-    // hook for certain built-in Attributor-based formats. Without this
-    // explicit classList.add, the saved HTML never actually got
-    // class="ql-embed-block" on it, so the frontend's detection regex
-    // silently never matched and the raw placeholder text rendered as
-    // plain text on the live site instead of being swapped for the embed.
     node.classList.add('ql-embed-block')
     node.setAttribute('data-embed-html', encodeURIComponent(html))
     node.setAttribute('contenteditable', 'false')
-    node.textContent = '🔗 Embed (renders live on the site — e.g. a licensed photo or social post)'
+    node.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;background:#f3f4f6;border:1px dashed #9ca3af;border-radius:8px;padding:10px 12px;color:#4b5563;font-size:13px;'
+    const label = document.createElement('span')
+    label.textContent = '🔗 Embed block (renders live on the site — e.g. a licensed photo or social post)'
+    node.appendChild(label)
+    // Visible one-click way to delete this block -- editing text around a
+    // contenteditable="false" node is finicky with plain Backspace, so this
+    // gives an explicit, reliable way to remove one if it was inserted by
+    // mistake. The actual removal is wired up in ArticleEditor via a
+    // delegated click listener on the Quill root (this button can't call
+    // the editor's API directly -- it has no reference to the Quill
+    // instance here).
+    const removeBtn = document.createElement('button')
+    removeBtn.type = 'button'
+    removeBtn.className = 'ql-embed-remove-btn'
+    removeBtn.textContent = '✕ Remove'
+    removeBtn.style.cssText = 'flex-shrink:0;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:3px 8px;font-size:12px;color:#dc2626;cursor:pointer;'
+    node.appendChild(removeBtn)
     return node
   }
   static value(node) {
@@ -43,11 +64,14 @@ class InlineEmbedBlot extends BlockEmbed {
   }
 }
 InlineEmbedBlot.blotName = 'embedBlock'
-InlineEmbedBlot.tagName = 'div'
+InlineEmbedBlot.tagName = 'tave-embed'
+InlineEmbedBlot.className = 'ql-embed-block'
 Quill.register(InlineEmbedBlot)
 
 function insertEmbedHandler() {
-  const html = window.prompt('Paste the embed code (e.g. the "Embed from Getty Images" snippet, or a tweet/Instagram embed code):')
+  const html = window.prompt(
+    'Paste a licensed embed CODE SNIPPET here (e.g. the "Embed from Getty Images" HTML, or a tweet/Instagram embed code) — NOT a plain link, URL, or normal text. Leave blank / Cancel to do nothing.'
+  )
   if (!html || !html.trim()) return
   // Inside a Quill toolbar handler, `this` is the Toolbar module instance,
   // not the editor -- the editor is reached via `this.quill`. Calling
@@ -85,7 +109,7 @@ export default function ArticleEditor() {
     isHero: false, isTopStory: false,
     embeddedVideo: '',
     seo: { metaTitle: '', metaDescription: '', keywords: '' },
-    featuredImage: { url: '', publicId: '', alt: '', embedHtml: '', thumbnailUrl: '', thumbnailPublicId: '', thumbnailEmbedHtml: '' },
+    featuredImage: { url: '', publicId: '', alt: '', credit: '', embedHtml: '', thumbnailUrl: '', thumbnailPublicId: '', thumbnailEmbedHtml: '' },
   })
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(false)
@@ -94,6 +118,29 @@ export default function ArticleEditor() {
   const [imageMode, setImageMode] = useState('upload') // 'upload' | 'embed'
   const [thumbnailMode, setThumbnailMode] = useState('upload') // 'upload' | 'embed'
   const [activeTab, setActiveTab] = useState('content')
+  const quillRef = useRef(null)
+
+  // Lets someone click the "✕ Remove" button rendered inside an embed
+  // placeholder block (see InlineEmbedBlot above) to delete that block in
+  // one click, instead of needing to position the cursor exactly next to a
+  // contenteditable="false" node and hit Backspace/Delete.
+  useEffect(() => {
+    const editor = quillRef.current?.getEditor?.()
+    if (!editor) return
+    const root = editor.root
+    const onClick = (e) => {
+      const btn = e.target.closest('.ql-embed-remove-btn')
+      if (!btn) return
+      const blockNode = btn.closest('.ql-embed-block')
+      if (!blockNode) return
+      const blot = Quill.find(blockNode)
+      if (!blot) return
+      const index = editor.getIndex(blot)
+      editor.deleteText(index, 1, 'user')
+    }
+    root.addEventListener('click', onClick)
+    return () => root.removeEventListener('click', onClick)
+  }, [activeTab])
 
   useEffect(() => {
     const api = getAPI(activeSite)
@@ -116,7 +163,10 @@ export default function ArticleEditor() {
             isHero: article.isHero || false,
             isTopStory: article.isTopStory || false,
             embeddedVideo: article.embeddedVideo || '',
-            featuredImage: article.featuredImage || { url: '', publicId: '', alt: '', embedHtml: '', thumbnailUrl: '', thumbnailPublicId: '', thumbnailEmbedHtml: '' },
+            featuredImage: {
+              url: '', publicId: '', alt: '', credit: '', embedHtml: '', thumbnailUrl: '', thumbnailPublicId: '', thumbnailEmbedHtml: '',
+              ...(article.featuredImage || {}),
+            },
             seo: {
               metaTitle: article.seo?.metaTitle || '',
               metaDescription: article.seo?.metaDescription || '',
@@ -260,6 +310,7 @@ export default function ArticleEditor() {
             <div>
               <div className="bg-white rounded-xl overflow-hidden">
                 <ReactQuill
+                  ref={quillRef}
                   value={form.content}
                   onChange={val => setForm(f => ({ ...f, content: val }))}
                   modules={modules}
@@ -313,6 +364,17 @@ export default function ArticleEditor() {
                     {uploading ? 'Uploading...' : 'Upload Image'}
                     <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" disabled={uploading} />
                   </label>
+                  <div>
+                    <label className="text-gray-400 text-xs uppercase tracking-widest block mb-2">
+                      Photo Credit (optional)
+                    </label>
+                    <input
+                      value={form.featuredImage.credit}
+                      onChange={e => setForm(f => ({ ...f, featuredImage: { ...f.featuredImage, credit: e.target.value } }))}
+                      placeholder="e.g. Photo: Jane Doe / Tave News"
+                      className="w-full bg-gray-950 text-gray-300 border border-gray-700 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-yellow-400 placeholder-gray-600"
+                    />
+                  </div>
                 </>
               )}
 
@@ -343,6 +405,18 @@ export default function ArticleEditor() {
                       </div>
                     </div>
                   )}
+
+                  <div>
+                    <label className="text-gray-400 text-xs uppercase tracking-widest block mb-2">
+                      Photo Credit (optional)
+                    </label>
+                    <input
+                      value={form.featuredImage.credit}
+                      onChange={e => setForm(f => ({ ...f, featuredImage: { ...f.featuredImage, credit: e.target.value } }))}
+                      placeholder="e.g. Photo: Getty Images"
+                      className="w-full bg-gray-950 text-gray-300 border border-gray-700 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-yellow-400 placeholder-gray-600"
+                    />
+                  </div>
 
                   <div className="pt-2 border-t border-gray-700">
                     <label className="text-gray-400 text-xs uppercase tracking-widest block mb-2">
@@ -530,7 +604,8 @@ export default function ArticleEditor() {
             </Button>
           </div>
         </div>
-      </div>
+     
+     </div>
     </div>
   )
 }
