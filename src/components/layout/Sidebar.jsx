@@ -43,7 +43,7 @@ export default function Sidebar({ isOpen = false, onClose = () => {} }) {
         <div className="p-6 border-b border-gray-800 flex items-start justify-between shrink-0">
           <div>
             <div className="text-white font-black text-xl tracking-tight flex items-center gap-2">
-              {isSports ? <MdSportsSoccer size={20} className="text-yellow-400" /> : <MdNewspaper size={20} />}
+              {isSports ? <MdSportsSoccer size={20} className="text-yellow-400" /> : <img src="/favicon.png" alt="" className="w-5 h-5 rounded object-cover" />}
               {isSports ? 'TEN SPORTS' : 'TAVE NEWS'}
             </div>
             <div className="text-gray-500 text-xs mt-1">Admin CMS</div>
