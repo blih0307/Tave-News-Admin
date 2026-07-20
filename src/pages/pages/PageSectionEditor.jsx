@@ -11,6 +11,8 @@ const PAGE_NAMES = {
   about: 'About',
   contact: 'Contact',
   monetization: 'Monetization',
+  privacy: 'Privacy Policy',
+  terms: 'Terms of Use',
 }
 
 const TYPE_OPTIONS = ['text', 'richtext', 'image', 'link', 'boolean', 'json']

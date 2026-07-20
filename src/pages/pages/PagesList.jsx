@@ -9,6 +9,8 @@ const PAGES = [
   { slug: 'about', name: 'About', description: 'Hero, who we are, write-for-us CTA' },
   { slug: 'contact', name: 'Contact', description: 'Hero, contact email and details' },
   { slug: 'monetization', name: 'Monetization', description: 'AdSense on/off, publisher ID, and each ad slot' },
+  { slug: 'privacy', name: 'Privacy Policy', description: 'Full policy text shown at /privacy-policy' },
+  { slug: 'terms', name: 'Terms of Use', description: 'Full terms text shown at /terms-of-use' },
 ]
 
 export default function PagesList() {
