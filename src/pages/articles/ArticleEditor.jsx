@@ -24,14 +24,14 @@ Quill.import('ui/icons').embed =
 //
 // IMPORTANT: the tag name below is deliberately NOT a generic tag like
 // "div". Quill/Parchment matches pasted HTML nodes to registered blots by
-// tag name when there's no more specific class match (see
-// Parchment.query in registry.ts: it checks classList first, then falls
-// back to `tags[node.tagName]`). Word, Google Docs, and many websites
-// wrap ordinary pasted paragraphs in plain <div> elements with no
-// distinguishing class -- so registering this blot under tagName "div"
-// caused EVERY pasted div (i.e. basically any pasted rich text) to get
-// silently reinterpreted as an embed block. A custom, hyphenated tag name
-// (valid HTML, never produced by any real copy/paste source) makes that
+// tag name when there's no more specific class match (see Parchment.query
+// in registry.ts: it checks classList first, then falls back to
+// `tags[node.tagName]`). Word, Google Docs, and many websites wrap
+// ordinary pasted paragraphs in plain <div> elements with no distinguishing
+// class -- so registering this blot under tagName "div" caused EVERY
+// pasted div (i.e. basically any pasted rich text) to get silently
+// reinterpreted as an embed block. A custom, hyphenated tag name (valid
+// HTML, never produced by any real copy/paste source) makes that
 // collision impossible.
 const BlockEmbed = Quill.import('blots/block/embed')
 class InlineEmbedBlot extends BlockEmbed {
@@ -68,18 +68,19 @@ InlineEmbedBlot.tagName = 'tave-embed'
 InlineEmbedBlot.className = 'ql-embed-block'
 Quill.register(InlineEmbedBlot)
 
+// Bridges Quill's imperative toolbar handler (which runs outside React,
+// with `this` bound to the Toolbar module) into React state, so clicking
+// the embed button opens a real modal instead of a plain window.prompt()
+// with no way to preview what you're about to insert. Set by the
+// component on mount.
+let openEmbedModal = null
+
 function insertEmbedHandler() {
-  const html = window.prompt(
-    'Paste a licensed embed CODE SNIPPET here (e.g. the "Embed from Getty Images" HTML, or a tweet/Instagram embed code) — NOT a plain link, URL, or normal text. Leave blank / Cancel to do nothing.'
-  )
-  if (!html || !html.trim()) return
-  // Inside a Quill toolbar handler, `this` is the Toolbar module instance,
-  // not the editor -- the editor is reached via `this.quill`. Calling
-  // this.getSelection() directly throws "not a function".
   const range = this.quill.getSelection(true)
-  this.quill.insertEmbed(range.index, 'embedBlock', html.trim(), 'user')
-  this.quill.setSelection(range.index + 1, 0, 'user')
+  openEmbedModal?.(this.quill, range)
 }
+
+const Delta = Quill.import('delta')
 
 const modules = {
   toolbar: {
@@ -95,6 +96,70 @@ const modules = {
       embed: insertEmbedHandler,
     },
   },
+  clipboard: {
+    matchers: [
+      // Without this, loading existing content back into Quill (which
+      // happens every time an article is reopened for editing) silently
+      // strips this custom tag down to a plain <p>, because Quill's
+      // default importer doesn't recognize this shape and falls back to
+      // keeping only the visible text.
+      ['tave-embed.ql-embed-block', (node, delta) => {
+        const html = decodeURIComponent(node.getAttribute('data-embed-html') || '')
+        return new Delta().insert({ embedBlock: html })
+      }],
+    ],
+  },
+}
+
+// Modal for inserting/previewing an inline body embed. Quill's editor
+// itself only ever shows the plain placeholder text for an embed blot
+// (rendering a live third-party script inside a contenteditable region is
+// asking for trouble -- focus jumps, selection loss, scripts firing
+// mid-edit), so this is the only place an editor can actually see what the
+// embed looks like before publishing.
+function EmbedInsertModal({ quill, range, onClose }) {
+  const [html, setHtml] = useState('')
+
+  const handleInsert = () => {
+    if (!html.trim()) return
+    quill.insertEmbed(range.index, 'embedBlock', html.trim(), 'user')
+    quill.setSelection(range.index + 1, 0, 'user')
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-gray-800 rounded-xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        <h3 className="text-white font-semibold">Insert Embed</h3>
+        <p className="text-gray-500 text-xs">
+          Paste the embed code (Getty, SmartFrame, a tweet/Instagram embed, etc). The preview below is exactly
+          what will render live on the site.
+        </p>
+        <textarea
+          autoFocus
+          value={html}
+          onChange={e => setHtml(e.target.value)}
+          rows={6}
+          placeholder='<script async src="..."></script><smartframe-embed ...></smartframe-embed>'
+          className="w-full bg-gray-950 text-green-400 font-mono border border-gray-600 rounded-lg px-4 py-2.5 text-xs outline-none focus:border-yellow-400 resize-y"
+        />
+        {html.trim() && (
+          <div>
+            <label className="text-gray-400 text-xs uppercase tracking-widest block mb-2">Preview</label>
+            <div className="bg-white rounded-lg p-2">
+              <div className="w-full aspect-video overflow-hidden">
+                <EmbedHtml html={html} className="w-full h-full" />
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="flex gap-2 pt-2">
+          <Button onClick={handleInsert} disabled={!html.trim()} className="flex-1 justify-center">Insert</Button>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export default function ArticleEditor() {
@@ -118,6 +183,7 @@ export default function ArticleEditor() {
   const [imageMode, setImageMode] = useState('upload') // 'upload' | 'embed'
   const [thumbnailMode, setThumbnailMode] = useState('upload') // 'upload' | 'embed'
   const [activeTab, setActiveTab] = useState('content')
+  const [embedModal, setEmbedModal] = useState(null) // { quill, range } while the insert-embed modal is open
   const quillRef = useRef(null)
 
   // Lets someone click the "✕ Remove" button rendered inside an embed
@@ -141,6 +207,11 @@ export default function ArticleEditor() {
     root.addEventListener('click', onClick)
     return () => root.removeEventListener('click', onClick)
   }, [activeTab])
+
+  useEffect(() => {
+    openEmbedModal = (quill, range) => setEmbedModal({ quill, range })
+    return () => { openEmbedModal = null }
+  }, [])
 
   useEffect(() => {
     const api = getAPI(activeSite)
@@ -319,7 +390,7 @@ export default function ArticleEditor() {
               </div>
               <p className="text-gray-500 text-xs mt-2">
                 Need a photo mid-article that isn't yours to upload? Use the <strong className="text-gray-400">embed</strong> button
-                in the toolbar (next to the image icon) and paste a licensed embed snippet instead.
+                in the toolbar (next to the image icon) — it opens a preview so you can see exactly what will render live before inserting it.
               </p>
             </div>
           )}
@@ -462,7 +533,7 @@ export default function ArticleEditor() {
                           value={form.featuredImage.thumbnailEmbedHtml}
                           onChange={e => handleThumbnailEmbedChange(e.target.value)}
                           rows={4}
-                          placeholder='<script async src="https://embed.smartframe.io/..."></script><smart-frame-embed ...></smart-frame-embed>'
+                          placeholder='<script async src="https://static.smartframe.io/embed.js"></script><smartframe-embed customer-id="..." image-id="..." style="width:100%"></smartframe-embed>'
                           className="w-full bg-gray-950 text-green-400 font-mono border border-gray-600 rounded-lg px-4 py-2.5 text-xs outline-none focus:border-yellow-400 resize-y"
                         />
                         {form.featuredImage.thumbnailEmbedHtml && (
@@ -604,8 +675,15 @@ export default function ArticleEditor() {
             </Button>
           </div>
         </div>
-     
-     </div>
+      </div>
+
+      {embedModal && (
+        <EmbedInsertModal
+          quill={embedModal.quill}
+          range={embedModal.range}
+          onClose={() => setEmbedModal(null)}
+        />
+      )}
     </div>
   )
 }
